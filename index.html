@@ -1,4 +1,4 @@
-<!-- SEMO ERP: restored from verified V58 baseline; application logic/data preserved. -->
+ <!-- SEMO ERP: restored from verified V58 baseline; application logic/data preserved. -->
 <!DOCTYPE html>
 
 <html dir="rtl" lang="ar">
@@ -8445,6 +8445,7 @@ body.semo-authenticated #moduleView:not(.hidden) #moduleBody .panel{
 
   let isSyncing = false;
   let pushDebounceTimer = null;
+  let lastSuccessfulConnection = '';
 
   function getHeaders(){
     return {
@@ -8454,13 +8455,39 @@ body.semo-authenticated #moduleView:not(.hidden) #moduleBody .panel{
     };
   }
 
+  function updateStatus(state){
+    const pill = document.getElementById('semoCloudStatus');
+    if(!pill) return;
+    if(state === true) lastSuccessfulConnection = new Date().toLocaleTimeString('ar-EG');
+
+    // Only show pending when actively saving/pushing new user data, never flicker during background polling!
+    const isPending = (state === 'saving');
+    const isOnline = (state === true || state === 'online');
+
+    const color = isPending ? '#f59e0b' : isOnline ? '#10b981' : '#ef4444';
+    const label = isPending ? 'جارٍ الحفظ السحابي...' : isOnline ? 'متصل سحابياً' : 'تعذّر الاتصال بالسحابة';
+
+    pill.textContent = '';
+    const dot = document.createElement('span');
+    dot.setAttribute('aria-hidden', 'true');
+    dot.style.cssText = 'display:inline-block;width:7px;height:7px;border-radius:50%;background:' + color + ';box-shadow:0 0 6px ' + color;
+    pill.appendChild(dot);
+    pill.appendChild(document.createTextNode(' ' + label));
+
+    pill.style.setProperty('color', color, 'important');
+    pill.style.setProperty('border-color', color, 'important');
+    pill.style.setProperty('background', isPending ? 'rgba(245,158,11,0.12)' : isOnline ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)', 'important');
+    pill.title = lastSuccessfulConnection ? 'آخر اتصال ناجح: ' + lastSuccessfulConnection : 'المزامنة السحابية نشطة';
+  }
+
+  // Push user modifications to cloud (triggers "Saving" status cleanly)
   window.semoPushToCloud = function(silent){
     if(pushDebounceTimer) clearTimeout(pushDebounceTimer);
     pushDebounceTimer = setTimeout(async function(){
       if(isSyncing) return;
       try {
         isSyncing = true;
-        updateStatus('pending');
+        updateStatus('saving');
         const res = await fetch(BIN_URL, {
           method: 'PUT',
           headers: getHeaders(),
@@ -8474,32 +8501,31 @@ body.semo-authenticated #moduleView:not(.hidden) #moduleBody .panel{
       } finally {
         isSyncing = false;
       }
-    }, 400);
+    }, 600);
   };
 
+  // Pull background updates without ANY UI flashing or re-rendering open dialogs
   window.semoPullFromCloud = async function(silent){
     if(isSyncing) return;
     try {
       isSyncing = true;
-        updateStatus('pending');
+      // Do NOT set status to pending/flickering on background silent checks!
       const res = await fetch(BIN_URL + '/latest', {
         method: 'GET',
         headers: getHeaders()
       });
       if(!res.ok) throw new Error('Cloud HTTP ' + res.status);
-      if(res.ok){
-        const data = await res.json();
-        const record = data.record || data;
-        if(record && typeof record === 'object' && !Array.isArray(record) && record.system !== 'SEMO_ERP'){
-          window.db = record;
-          db = record;
-          try { localStorage.setItem('SEMO_ERP_OFFLINE_TEST_DB_V1', JSON.stringify(db)); } catch(err){}
-          // Keep the open workspace intact during background sync.
-        } else if(record && record.system === 'SEMO_ERP'){
-          window.semoPushToCloud(true);
-        }
-        updateStatus(true);
+      const data = await res.json();
+      const record = data.record || data;
+      if(record && typeof record === 'object' && !Array.isArray(record) && record.system !== 'SEMO_ERP'){
+        window.db = record;
+        db = record;
+        try { localStorage.setItem('SEMO_ERP_OFFLINE_TEST_DB_V1', JSON.stringify(db)); } catch(err){}
+        // IMPORTANT: Never call renderModule() here! It destroys open modals, forms, and scrap operation center!
+      } else if(record && record.system === 'SEMO_ERP'){
+        window.semoPushToCloud(true);
       }
+      updateStatus(true);
     } catch(e){
       console.warn('Sync pull error:', e);
       updateStatus(false);
@@ -8508,56 +8534,35 @@ body.semo-authenticated #moduleView:not(.hidden) #moduleBody .panel{
     }
   };
 
-  let lastSuccessfulConnection = '';
-  function updateStatus(state){
-    const pill = document.getElementById('semoCloudStatus');
-    if(state === true) lastSuccessfulConnection = new Date().toLocaleString('ar-EG');
-    if(!pill) return;
-    const pending = state === 'pending';
-    const color = pending ? '#f59e0b' : state === true ? '#10b981' : '#ef4444';
-    const label = pending ? 'جارٍ الاتصال…' : state === true ? 'متصل سحابيًا' : 'تعذّر الاتصال بالسحابة';
-    pill.textContent = '';
-    const dot = document.createElement('span');
-    dot.setAttribute('aria-hidden','true');
-    dot.style.cssText = 'display:inline-block;width:7px;height:7px;border-radius:50%;background:' + color;
-    pill.appendChild(dot);
-    pill.appendChild(document.createTextNode(' ' + label));
-    pill.style.setProperty('color',color,'important');
-    pill.style.setProperty('border-color',color,'important');
-    pill.style.setProperty('background',pending ? 'rgba(245,158,11,.12)' : state === true ? 'rgba(16,185,129,.12)' : 'rgba(239,68,68,.12)','important');
-    pill.title = lastSuccessfulConnection ? 'آخر اتصال ناجح: ' + lastSuccessfulConnection : 'لم يتم تأكيد اتصال ناجح بعد';
-    pill.setAttribute('aria-label',label + '. ' + pill.title);
-    pill.setAttribute('role','status');
-  }
-
+  // Hook save function
   const origSave = window.save;
   window.save = function(){
     if(typeof origSave === 'function') origSave.apply(this, arguments);
     else {
       try { localStorage.setItem('SEMO_ERP_OFFLINE_TEST_DB_V1', JSON.stringify(db)); } catch(e){}
     }
-    window.semoPushToCloud(true);
+    window.semoPushToCloud(false);
   };
 
+  // Periodic silent check every 15 seconds (calm, stable, no flashing)
   setInterval(function(){
     if(!isSyncing) window.semoPullFromCloud(true);
-  }, 5000);
+  }, 15000);
 
   window.addEventListener('focus', function(){
     window.semoPullFromCloud(true);
-  });
-  document.addEventListener('visibilitychange', function(){
-    if(!document.hidden) window.semoPullFromCloud(true);
   });
 
   document.addEventListener('DOMContentLoaded', function(){
     setTimeout(() => {
       window.semoPullFromCloud(true);
-    }, 400);
+    }, 500);
   });
+
+  // Initial check
   setTimeout(() => {
     window.semoPullFromCloud(true);
-  }, 1000);
+  }, 1200);
 })();
 </script>
 
@@ -10666,4 +10671,3 @@ function semoBarcodeSvg(value){const text=String(value||'');if(!text||Array.from
   }
 })();
 </script>
-
