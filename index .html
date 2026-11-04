@@ -1743,13 +1743,12 @@ body.semo-authenticated #appView #homeView > #semoRecentActivities { display:non
 <style id="semo-mobile-app-native-experience">
 @media (max-width: 768px) {
   html, body { overflow-x: hidden !important; width: 100vw !important; max-width: 100vw !important; }
-  header { position: sticky !important; top: 0 !important; z-index: 1000 !important; background: rgba(10,30,56,0.96) !important; backdrop-filter: blur(12px) !important; padding: 10px 14px !important; display: flex !important; justify-content: space-between !important; align-items: center !important; }
+  header { position: sticky !important; top: 0 !important; z-index: 1000 !important; background: rgba(10,30,56,0.96) !important; padding: 10px 14px !important; display: flex !important; justify-content: space-between !important; align-items: center !important; }
   .brand { font-size: 15px !important; font-weight: 800 !important; color: #38bdf8 !important; }
-  #semoClock, header .muted, #semoCloudStatus { display: none !important; }
+  #semoClock, header .muted { display: none !important; }
   .wrap, main.wrap { padding: 12px !important; margin: 0 auto 60px auto !important; width: 100% !important; box-sizing: border-box !important; }
   .tiles { display: grid !important; grid-template-columns: repeat(2, 1fr) !important; gap: 12px !important; margin: 16px 0 !important; }
   .tile { min-height: 110px !important; background: linear-gradient(145deg, rgba(22,60,105,0.75), rgba(13,38,68,0.85)) !important; border: 1px solid rgba(56,189,248,0.28) !important; border-radius: 18px !important; padding: 14px 10px !important; display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important; gap: 8px !important; }
-  .tile:active { transform: scale(0.96) !important; background: rgba(30,80,140,0.9) !important; }
   .tile span { font-size: 30px !important; width: 50px !important; height: 50px !important; display: flex !important; align-items: center !important; justify-content: center !important; background: rgba(56,189,248,0.14) !important; border-radius: 14px !important; }
   .tile b { font-size: 13px !important; font-weight: 700 !important; color: #e2e8f0 !important; text-align: center !important; }
   .metrics { display: grid !important; grid-template-columns: repeat(2, 1fr) !important; gap: 10px !important; }
@@ -1764,7 +1763,6 @@ body.semo-authenticated #appView #homeView > #semoRecentActivities { display:non
   #wfFormSide { width: 100% !important; max-width: 100% !important; padding: 32px 20px !important; box-sizing: border-box !important; }
 }
 </style>
-
 </head>
 <body>
 <header><div class="right"><div class="brand">منصة SEMO-Oracle-ERP</div><span class="muted">لإدارة شركات التطوير العقاري</span><span class="pill" id="semoClock">--:--:--</span><div class="semo-settings-notifications-group"><button class="secondary" onclick="openModule('settings')" title="الإعدادات" type="button">⚙️</button><div class="semo-notification-wrap" id="semoNotificationWrap"><button aria-expanded="false" aria-label="الإشعارات" class="secondary" id="semoNotificationButton" onclick="toggleNotifications()" title="الإشعارات" type="button"><span aria-hidden="true" class="semo-bell-glyph">🔔</span><span class="pill" id="semoNotificationCount">0</span></button><div class="card hidden semo-notification-panel" id="semoNotificationPanel"><div class="sectiontitle"><b>الإشعارات والتنبيهات</b><button class="secondary" onclick="toggleNotifications(false)" type="button">إغلاق</button></div><div class="note" id="semoNotificationList">لا توجد إشعارات جديدة.</div></div></div></div></div><div class="right"><input class="search" id="globalSearch" oninput="globalFilter()" placeholder="بحث في السجلات…" style="width:230px"/><span class="pill semo-cloud" id="semoCloudStatus"><i aria-hidden="true"></i> متصل سحابيًا</span><label class="semo-profile" id="semoProfileControl" title="اختيار صورة شخصية"><img alt="الصورة الشخصية" class="hidden" id="semoProfileImage"/><span id="semoProfileFallback">👤</span><input accept="image/*" hidden="" id="semoProfileUpload" onchange="saveSEMOProfilePhoto(this)" type="file"/></label><span class="pill" id="who">غير مسجل</span><button class="secondary" onclick="goHome()">الرئيسية</button><button class="secondary" id="semoChangePasswordBtn" onclick="semoChangeLocalPassword()" style="display:none!important" title="تغيير كلمة المرور">تغيير كلمة المرور</button><button aria-label="تسجيل الخروج" class="danger semo-logout" onclick="logout()" title="تسجيل الخروج">⏻</button></div></header>
@@ -8449,76 +8447,178 @@ body.semo-authenticated #moduleView:not(.hidden) #moduleBody .panel{
 
 
 
-<script id="semo-guaranteed-storage-v1">
+
+<script id="semo-firebase-realtime-engine">
 (function(){
   'use strict';
-  // 1. Keep status pill indicating solid permanent local storage
-  const pill = document.getElementById('semoCloudStatus');
-  if(pill){
-    pill.innerHTML = '<i aria-hidden="true" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#10b981;box-shadow:0 0 6px #10b981"></i> قاعدة بيانات محلية آمنة';
-    pill.style.setProperty('color', '#34d399', 'important');
-    pill.style.setProperty('border-color', '#10b981', 'important');
-    pill.style.setProperty('background', 'rgba(16,185,129,0.15)', 'important');
+  const FIREBASE_DB_URL = 'https://semo-cd872-default-rtdb.firebaseio.com/semo_erp_db.json';
+  let isSavingToCloud = false;
+  let saveDebounceTimer = null;
+  let isInitialLoadDone = false;
+
+  function updateCloudStatus(status){
+    const pill = document.getElementById('semoCloudStatus');
+    if(!pill) return;
+    if(status === 'online'){
+      pill.innerHTML = '<i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 8px #10b981"></i> متصل لحظياً بالسحابة';
+      pill.style.setProperty('color', '#34d399', 'important');
+      pill.style.setProperty('border-color', '#10b981', 'important');
+      pill.style.setProperty('background', 'rgba(16,185,129,0.18)', 'important');
+      pill.title = 'أي حركة تسجلها تسمع في كل المتصفحات فوراً';
+    } else if(status === 'saving'){
+      pill.innerHTML = '<i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;box-shadow:0 0 8px #f59e0b"></i> جارٍ التحديث في كل الأجهزة...';
+      pill.style.setProperty('color', '#fbbf24', 'important');
+      pill.style.setProperty('border-color', '#f59e0b', 'important');
+      pill.style.setProperty('background', 'rgba(245,158,11,0.18)', 'important');
+    } else if(status === 'error'){
+      pill.innerHTML = '<i aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;box-shadow:0 0 8px #ef4444"></i> خطأ في الاتصال';
+      pill.style.setProperty('color', '#f87171', 'important');
+      pill.style.setProperty('border-color', '#ef4444', 'important');
+      pill.style.setProperty('background', 'rgba(239,68,68,0.18)', 'important');
+    }
   }
 
-  // 2. Safe save wrapper with error protection
-  window.save = function(){
+  // Push local DB to Firebase Realtime Database
+  window.semoSyncPush = function(){
+    if(saveDebounceTimer) clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = setTimeout(async function(){
+      try {
+        isSavingToCloud = true;
+        updateCloudStatus('saving');
+
+        // Ensure timestamp
+        if(window.db && typeof window.db === 'object'){
+          window.db._last_sync_time = Date.now();
+        }
+
+        const payload = JSON.stringify(window.db || db);
+        const res = await fetch(FIREBASE_DB_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload
+        });
+
+        if(res.ok){
+          updateCloudStatus('online');
+        } else {
+          console.warn('Firebase PUT status:', res.status);
+          updateCloudStatus('error');
+        }
+      } catch(err){
+        console.error('Firebase PUT error:', err);
+        updateCloudStatus('error');
+      } finally {
+        isSavingToCloud = false;
+      }
+    }, 400);
+  };
+
+  // Pull latest updates from Firebase Realtime Database
+  window.semoSyncPull = async function(silent){
+    if(isSavingToCloud) return;
     try {
-      window.db = db;
-      localStorage.setItem('SEMO_ERP_OFFLINE_TEST_DB_V1', JSON.stringify(db));
+      const res = await fetch(FIREBASE_DB_URL);
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      const cloudData = await res.json();
+
+      if(cloudData && typeof cloudData === 'object' && !Array.isArray(cloudData)){
+        const localDb = window.db || db || {};
+        const localTime = Number(localDb._last_sync_time || 0);
+        const cloudTime = Number(cloudData._last_sync_time || 0);
+
+        // Check if cloud has valid data
+        const hasCloudData = (Array.isArray(cloudData.products) && cloudData.products.length > 0) ||
+                             (Array.isArray(cloudData.stock) && cloudData.stock.length > 0) ||
+                             (Array.isArray(cloudData.receipts) && cloudData.receipts.length > 0) ||
+                             (Array.isArray(cloudData.users) && cloudData.users.length > 0);
+
+        const hasLocalData = (Array.isArray(localDb.products) && localDb.products.length > 0) ||
+                             (Array.isArray(localDb.stock) && localDb.stock.length > 0) ||
+                             (Array.isArray(localDb.receipts) && localDb.receipts.length > 0);
+
+        // If local has data but cloud is completely empty (first time linking): push local data to cloud!
+        if(hasLocalData && !hasCloudData){
+          console.log('Seeding cloud with existing local data...');
+          window.semoSyncPush();
+          updateCloudStatus('online');
+          return;
+        }
+
+        // If cloud is newer OR we just opened another browser that needs the data
+        if(cloudTime >= localTime || !hasLocalData){
+          // Check if data actually changed to avoid unnecessary re-renders
+          const currentStr = JSON.stringify(localDb);
+          const newStr = JSON.stringify(cloudData);
+
+          if(currentStr !== newStr){
+            window.db = cloudData;
+            db = cloudData;
+            try {
+              localStorage.setItem('SEMO_ERP_OFFLINE_TEST_DB_V1', JSON.stringify(db));
+            } catch(e){}
+
+            // Update UI smoothly
+            if(typeof refreshMetrics === 'function') refreshMetrics();
+            if(typeof renderModule === 'function' && typeof activeModule !== 'undefined' && activeModule && activeModule !== 'settings'){
+              // Only re-render if user is viewing data tables
+              const activeModEl = document.querySelector('#semoEngineeringActionModal, #semoOpeningModal, [id*="Center"]');
+              if(!activeModEl){
+                renderModule();
+              }
+            }
+          }
+        }
+        updateCloudStatus('online');
+      } else {
+        // Cloud is completely null (newly created database): seed it from current browser if it has data!
+        const localDb = window.db || db || {};
+        if(localDb && Object.keys(localDb).length > 0){
+          window.semoSyncPush();
+        }
+        updateCloudStatus('online');
+      }
     } catch(err){
-      console.error('Save error:', err);
-      alert('تنبيه: امتلاء ذاكرة المتصفح أو تعذر الحفظ المحلي: ' + err.message);
+      console.warn('Firebase pull error:', err);
+      // Fallback: local storage is still safe
     }
-    if(typeof refreshMetrics === 'function') refreshMetrics();
   };
 
-  // 3. Easy one-click backup & restore for mobile
-  window.semoOpenPasteBackupModal = function(){
-    const old = document.getElementById('semoPasteBackupModal');
-    if(old) old.remove();
-    const m = document.createElement('div');
-    m.id = 'semoPasteBackupModal';
-    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9999999;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;';
-    m.innerHTML = '<div style="background:#0f2744;border:1px solid #38bdf8;border-radius:20px;max-width:550px;width:100%;padding:22px;box-shadow:0 12px 48px rgba(0,0,0,0.9);color:#fff;direction:rtl;text-align:right;">' +
-      '<h3 style="margin-top:0;color:#38bdf8;font-size:18px;">📥 استيراد بيانات الأرصدة (للموبايل والكمبيوتر)</h3>' +
-      '<p style="font-size:12.5px;color:#94a3b8;line-height:1.6;">انسخ نص ملف النسخة الاحتياطية (JSON) من الواتساب والصقه هنا مباشرة لتثبيته فوراً:</p>' +
-      '<textarea id="semoPasteArea" rows="7" style="width:100%;box-sizing:border-box;border-radius:12px;border:1px solid #334155;background:#091e36;color:#e2e8f0;padding:12px;font-family:monospace;font-size:12px;margin:8px 0;" placeholder="الصق نص قاعدة البيانات هنا..."></textarea>' +
-      '<div style="display:flex;gap:10px;margin-top:10px;">' +
-        '<button type="button" class="primary" style="flex:1;padding:12px;font-weight:bold;background:#0284c7;color:#fff;border:none;border-radius:12px;cursor:pointer;font-size:14px;" onclick="semoApplyPastedJson()">تثبيت الأرصدة الآن</button>' +
-        '<button type="button" class="secondary" style="padding:12px 18px;background:#334155;color:#fff;border:none;border-radius:12px;cursor:pointer;font-size:14px;" onclick="document.getElementById(\'semoPasteBackupModal\').remove()">إلغاء</button>' +
-      '</div>' +
-    '</div>';
-    document.body.appendChild(m);
-  };
-
-  window.semoApplyPastedJson = function(){
-    const text = document.getElementById('semoPasteArea')?.value;
-    if(!text || !text.trim()){
-      alert('يرجى لصق نص النسخة أولاً');
-      return;
+  // Override save() function: saves locally + updates Firebase Realtime instantly
+  const originalSave = window.save;
+  window.save = function(){
+    if(window.db && typeof window.db === 'object'){
+      window.db._last_sync_time = Date.now();
     }
-    try {
-      const parsed = JSON.parse(text.trim());
-      if(!parsed || typeof parsed !== 'object' || Array.isArray(parsed)){
-        throw new Error('البيانات غير صالحة');
-      }
-      for(const k of Object.keys(defaults)){
-        if(!Array.isArray(parsed[k])) parsed[k] = Array.isArray(db[k]) ? db[k] : structuredClone(defaults[k]);
-      }
-      window.db = parsed;
-      db = parsed;
-      localStorage.setItem('SEMO_ERP_OFFLINE_TEST_DB_V1', JSON.stringify(db));
+    if(typeof originalSave === 'function'){
+      originalSave.apply(this, arguments);
+    } else {
+      try {
+        localStorage.setItem('SEMO_ERP_OFFLINE_TEST_DB_V1', JSON.stringify(window.db || db));
+      } catch(e){}
       if(typeof refreshMetrics === 'function') refreshMetrics();
-      if(typeof renderModule === 'function') renderModule();
-      alert('تم استيراد وتثبيت جميع الأرصدة والحركات بنجاح تام!');
-      document.getElementById('semoPasteBackupModal')?.remove();
-    } catch(e){
-      alert('خطأ في استيراد البيانات: ' + e.message);
     }
+    window.semoSyncPush();
   };
+
+  // Immediate pull on start
+  setTimeout(function(){
+    window.semoSyncPull(false);
+  }, 300);
+
+  // Poll for updates from other browsers every 3 seconds (Realtime feel, 0 server cost on Firebase free tier)
+  setInterval(function(){
+    if(!isSavingToCloud){
+      window.semoSyncPull(true);
+    }
+  }, 3000);
+
+  // When browser gains focus, sync immediately
+  window.addEventListener('focus', function(){
+    window.semoSyncPull(true);
+  });
 })();
 </script>
+
 </body>
 </html>
 <script id="semo-payroll-october-2026-deduplicate-and-summary">
